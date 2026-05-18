@@ -6,7 +6,7 @@ help:
 	@echo "targets:"
 	@echo "  run		Run start.sh script. Recommended for the 1st use" 
 	@echo "  up         Build and start the docker-compose cluster in the background"
-	@echo "  down       Stop everything and wipe the local DB volumes"
+	@echo "  down       Delete everything and wipe the local DB volumes"
 	@echo "  restart    Nuke the containers and start fresh"
 	@echo "  tidy       Format Go code and clean up go.mod"
 
