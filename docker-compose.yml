@@ -1,0 +1,105 @@
+
+services:
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    ports:
+      - "${RMQ_PORT}:5672"  
+      - "15672:15672" 
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  roach1:
+    image: cockroachdb/cockroach:latest
+    command: start --insecure --join=roach1,roach2, --listen-addr=roach1:26257 --http-addr=0.0.0.0:8080 --cache=256Mi --max-sql-memory=256Mi
+    ports:
+      - "${DB_PORT}:26257"
+      - "8081:8080"  
+    volumes:
+      - roach1_data:/cockroach/cockroach-data
+
+  roach2:
+    image: cockroachdb/cockroach:latest
+    command: start --insecure --join=roach1,roach2, --listen-addr=roach2:26257 --cache=256Mi --max-sql-memory=256Mi
+    volumes:
+      - roach2_data:/cockroach/cockroach-data
+  # ==========================================
+  # 3. DATABASE INITIALIZATION
+  # ==========================================
+  db-init:
+    image: cockroachdb/cockroach:latest
+    volumes:
+      - ./init-db.sh:/init-db.sh
+    entrypoint: ["/bin/bash", "/init-db.sh"]
+    depends_on:
+      roach1:
+        condition: service_started
+      roach2:
+        condition: service_started
+
+# ==========================================
+  # 4. GO MICROSERVICES
+  # ==========================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: api
+    ports:
+      - "${PORT}:${PORT}"
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://${DB_USER}@${DB_HOST}:26257/${DB_NAME}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RMQ_USER}:${RMQ_PASS}@${RMQ_HOST}:5672/
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:${PORT}/feed || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: worker
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgres://${DB_USER}@${DB_HOST}:26257/${DB_NAME}?sslmode=disable
+      - RABBITMQ_URL=amqp://${RMQ_USER}:${RMQ_PASS}@${RMQ_HOST}:5672/
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      db-init:
+        condition: service_completed_successfully
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        APP_NAME: bot
+    env_file:
+      - .env
+    environment:
+      - API_URL=http://api:${PORT}/message
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  rabbitmq_data:
+  roach1_data:
+  roach2_data:
